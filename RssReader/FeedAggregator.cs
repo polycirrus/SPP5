@@ -11,30 +11,55 @@ namespace RssReader
 {
     public class FeedAggregator
     {
-        private List<string> sources;
-        private Timer timer;
+        private const int timerInterval = 1000;
+        private const long defaultRefreshInterval = 600000000; //60 seconds
 
-        public List<FeedItem> Feed { get; private set; }
-        public DateTime LastUpdated { get; private set; }
-        public TimeSpan RefreshInterval { get; set; }
+        private List<string> sources;
+        private string[] filterSources;
+        private List<FeedItem> feed;
+        private List<FeedItem> filteredFeed;
+
+        private DateTime lastUpdated;
+        private TimeSpan refreshInterval;
+
+        private Timer timer;
+        private object syncRoot = new object();
+        
+        public List<FeedItem> Feed
+        {
+            get { lock (syncRoot) { return feed; } }
+            protected set { lock (syncRoot) { feed = value; } }
+        }
+
+        public DateTime LastUpdated
+        {
+            get { lock (syncRoot) { return lastUpdated; } }
+            protected set { lock (syncRoot) { lastUpdated = value; } }
+        }
+
+        public TimeSpan RefreshInterval
+        {
+            get { lock (syncRoot) { return refreshInterval; } }
+            set { lock (syncRoot) { refreshInterval = value; } }
+        }
 
         public event EventHandler FeedRefreshed;
 
         public FeedAggregator()
         {
             sources = new List<string>();
-            Feed = new List<FeedItem>();
-            LastUpdated = DateTime.MinValue;
-            RefreshInterval = new TimeSpan(0, 1, 0); //1 minute interval as default
+            feed = new List<FeedItem>();
+            lastUpdated = DateTime.MinValue;
+            refreshInterval = new TimeSpan(defaultRefreshInterval);
 
-            timer = new Timer(1000); //checks every 1 seconds
+            timer = new Timer(timerInterval);
             timer.Elapsed += OnTimerElapsed;
             timer.Start();
         }
 
         private void OnTimerElapsed(object sender, ElapsedEventArgs e)
         {
-            if (DateTime.Now - LastUpdated > RefreshInterval)
+            if (DateTime.Now - lastUpdated > refreshInterval)
                 Refresh();
         }
 
@@ -51,10 +76,13 @@ namespace RssReader
                 throw new Exception("Unable to add source: " + e.Message, e);
             }
 
-            sources.Add(source);
+            lock (syncRoot)
+            {
+                sources.Add(source);
 
-            Feed = Feed.Concat(newFeed).ToList();
-            Feed.SortByPublishDate();
+                feed = feed.Concat(newFeed).ToList();
+                feed.SortByPublishDate();
+            }
         }
 
         public void Refresh()
@@ -71,13 +99,19 @@ namespace RssReader
                         newFeed = newFeed.Concat(GetFeed(source));
                 }
 
-                Feed = newFeed.ToList();
-                Feed.SortByPublishDate();
+                lock (syncRoot)
+                {
+                    feed = newFeed.ToList();
+                    feed.SortByPublishDate();
+                }
             }
 
-            LastUpdated = DateTime.Now;
-            if (FeedRefreshed != null)
-                FeedRefreshed(this, new EventArgs());
+            lock (syncRoot)
+            {
+                lastUpdated = DateTime.Now;
+            }
+
+            FeedRefreshed?.Invoke(this, new EventArgs());
         }
 
         private IEnumerable<FeedItem> GetFeed(string source)
@@ -106,18 +140,58 @@ namespace RssReader
 
         public string[] GetSources()
         {
-            return sources.ToArray();
+            lock (syncRoot)
+            {
+                return sources.ToArray();
+            }
         }
 
         public void RemoveSource(string source)
         {
-            try
+            lock (syncRoot)
             {
-                sources.Remove(source);
+                try
+                {
+                    sources.Remove(source);
+                }
+                catch (Exception e)
+                {
+                    throw new Exception("Unable to remove source: " + e.Message, e);
+                }
             }
-            catch (Exception e)
+        }
+
+        public void SetSourceFilter(string[] acceptedSources)
+        {
+            lock (syncRoot)
             {
-                throw new Exception("Unable to remove source: " + e.Message, e);
+                foreach (var source in acceptedSources)
+                    if (!sources.Contains(source))
+                        throw new ArgumentException("\"" + source + "\" is not a member of this aggregator's source list.");
+
+                filterSources = acceptedSources;
+            }
+        }
+
+        private void FilterBySource()
+        {
+            FeedItem[] localFeed;
+            string[] localAcceptedSourceList;
+
+            lock (syncRoot)
+            {
+                localFeed = new FeedItem[feed.Count];
+                feed.CopyTo(localFeed);
+
+                localAcceptedSourceList = new string[filterSources.Length];
+                Array.Copy(filterSources, localAcceptedSourceList, filterSources.Length);
+            }
+
+            List<FeedItem> filterResult = localFeed.Where(feedItem => localAcceptedSourceList.Contains(feedItem.Source)).ToList();
+
+            lock (syncRoot)
+            {
+                filteredFeed = filterResult;
             }
         }
     }
