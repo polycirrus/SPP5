@@ -91,5 +91,11 @@ namespace RssReader
 
             RefreshForm();
         }
+
+        private void button1_Click(object sender, EventArgs e)
+        {
+            //aggregator.SetSourceFilter(new string[1] { "http://auto.onliner.by/feed" });
+            aggregator.Send(@"polycirrus@live.com");
+        }
     }
 }

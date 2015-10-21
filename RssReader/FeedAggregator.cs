@@ -27,14 +27,12 @@ namespace RssReader
         
         public List<FeedItem> Feed
         {
-            get { lock (syncRoot) { return feed; } }
-            protected set { lock (syncRoot) { feed = value; } }
+            get { lock (syncRoot) { return filteredFeed ?? feed; } }
         }
 
         public DateTime LastUpdated
         {
             get { lock (syncRoot) { return lastUpdated; } }
-            protected set { lock (syncRoot) { lastUpdated = value; } }
         }
 
         public TimeSpan RefreshInterval
@@ -60,7 +58,7 @@ namespace RssReader
         private void OnTimerElapsed(object sender, ElapsedEventArgs e)
         {
             if (DateTime.Now - lastUpdated > refreshInterval)
-                Refresh();
+                RefreshFeed();
         }
 
         public void AddSource(string source)
@@ -87,6 +85,11 @@ namespace RssReader
 
         public void Refresh()
         {
+            Task.Factory.StartNew(RefreshFeed);
+        }
+
+        private void RefreshFeed()
+        {
             if (sources.Count > 0)
             {
                 IEnumerable<FeedItem> newFeed = null;
@@ -110,6 +113,14 @@ namespace RssReader
             {
                 lastUpdated = DateTime.Now;
             }
+
+            bool filterSet;
+            lock (syncRoot)
+            {
+                filterSet = filterSources != null;
+            }
+            if (filterSet)
+                Task.Factory.StartNew(FilterBySource);
 
             FeedRefreshed?.Invoke(this, new EventArgs());
         }
@@ -175,24 +186,32 @@ namespace RssReader
 
         private void FilterBySource()
         {
-            FeedItem[] localFeed;
-            string[] localAcceptedSourceList;
-
+            FeedItem[] feedCopy;
+            string[] acceptedSourcesCopy;
             lock (syncRoot)
             {
-                localFeed = new FeedItem[feed.Count];
-                feed.CopyTo(localFeed);
-
-                localAcceptedSourceList = new string[filterSources.Length];
-                Array.Copy(filterSources, localAcceptedSourceList, filterSources.Length);
+                feedCopy = feed.ToArray();
+                acceptedSourcesCopy = (string[])filterSources.Clone();
             }
 
-            List<FeedItem> filterResult = localFeed.Where(feedItem => localAcceptedSourceList.Contains(feedItem.Source)).ToList();
+            List<FeedItem> filterResult = feedCopy.Where(feedItem => acceptedSourcesCopy.Contains(feedItem.Source)).ToList();
 
             lock (syncRoot)
             {
                 filteredFeed = filterResult;
             }
+        }
+
+        public void Send(string address)
+        {
+            FeedItem[] feedCopy;
+            lock (syncRoot)
+            {
+                feedCopy = feed.ToArray();
+            }
+
+            var sender = new NewsSender(@"polycirrus@gmail.com", @"sumszxdobwzycvcb");
+            sender.SendNewsItems(feedCopy, new string[1] { address });
         }
     }
 }

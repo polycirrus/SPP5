@@ -51,6 +51,7 @@
     <Reference Include="System.Xml" />
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="EmailSender.cs" />
     <Compile Include="FeedAggregator.cs" />
     <Compile Include="FeedItem.cs" />
     <Compile Include="FeedObjectsExtensions.cs" />
