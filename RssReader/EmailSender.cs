@@ -17,7 +17,7 @@ namespace RssReader
         private string smtpAddress = "smtp.gmail.com";
         private int smtpPort = 587;
 
-        private string[] recipientAddresses;
+        private string[] recipientAddresses = new string[0];
 
         public string[] RecipientAddresses
         {

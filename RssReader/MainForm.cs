@@ -13,6 +13,7 @@ namespace RssReader
     public partial class MainForm : Form
     {
         private FeedAggregator aggregator;
+        private object syncRoot = new object();
 
         public MainForm()
         {
@@ -20,8 +21,20 @@ namespace RssReader
 
             aggregator = new FeedAggregator();
             aggregator.FeedRefreshed += OnFeedRefreshed;
+            aggregator.FilteredFeedRefreshed += OnFilteredFeedRefreshed;
+            aggregator.NewsletterSent += OnNewsletterSent;
 
             RefreshForm();
+        }
+
+        private void OnNewsletterSent(object sender, EventArgs e)
+        {
+            this.Invoke(new Action(ShowNewsletterSentAlert));
+        }
+
+        private void OnFilteredFeedRefreshed(object sender, EventArgs e)
+        {
+            this.Invoke(new Action(RefreshForm));
         }
 
         private void OnFeedRefreshed(object sender, EventArgs e)
@@ -31,10 +44,11 @@ namespace RssReader
 
         private void RefreshForm()
         {
-            feedListBox.Items.Clear();
-            feedListBox.Items.AddRange(aggregator.Feed.ToArray());
-
-            refreshIntervalTextBox.Text = aggregator.RefreshInterval.TotalSeconds.ToString();
+            lock (syncRoot)
+            {
+                feedListBox.Items.Clear();
+                feedListBox.Items.AddRange(showFilteredCheckBox.Checked ? aggregator.FilteredFeed : aggregator.Feed);
+            }
 
             refreshButton.Enabled = true;
         }
@@ -72,30 +86,27 @@ namespace RssReader
             }
         }
 
-        private void manageSourcesButton_Click(object sender, EventArgs e)
+        private void preferencesButton_Click(object sender, EventArgs e)
         {
-            var dialog = new SourceManagerDialog(aggregator);
+            var dialog = new PreferencesDialog(aggregator);
             dialog.ShowDialog();
         }
 
-        private void applyRefreshIntervalButton_Click(object sender, EventArgs e)
+        private void sendButton_Click(object sender, EventArgs e)
         {
-            int interval; //in seconds
-            if (!int.TryParse(refreshIntervalTextBox.Text, out interval))
+            try
             {
-                MessageBox.Show(refreshIntervalTextBox.Text + " is not a valid double value.", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                return;
+                aggregator.SendNewsletter(sendFilteredCheckBox.Checked);
             }
-
-            aggregator.RefreshInterval = new TimeSpan(0, 0, interval);
-
-            RefreshForm();
+            catch (Exception exception)
+            {
+                MessageBox.Show(exception.Message, "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
         }
 
-        private void button1_Click(object sender, EventArgs e)
+        private void ShowNewsletterSentAlert()
         {
-            //aggregator.SetSourceFilter(new string[1] { "http://auto.onliner.by/feed" });
-            aggregator.Send(@"polycirrus@live.com");
+            MessageBox.Show("E-mails sent.");
         }
     }
 }

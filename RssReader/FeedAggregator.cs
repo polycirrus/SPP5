@@ -24,10 +24,17 @@ namespace RssReader
 
         private Timer timer;
         private object syncRoot = new object();
+
+        private NewsSender newsSender;
         
-        public List<FeedItem> Feed
+        public FeedItem[] Feed
         {
-            get { lock (syncRoot) { return filteredFeed ?? feed; } }
+            get { lock (syncRoot) { return feed.ToArray(); } }
+        }
+
+        public FeedItem[] FilteredFeed
+        {
+            get { lock (syncRoot) { return filteredFeed?.ToArray() ?? feed.ToArray(); } }
         }
 
         public DateTime LastUpdated
@@ -41,7 +48,31 @@ namespace RssReader
             set { lock (syncRoot) { refreshInterval = value; } }
         }
 
+        public string[] SourceFilter
+        {
+            get { lock (syncRoot) { return (string[])filterSources?.Clone(); } }
+            set
+            {
+                lock (syncRoot)
+                {
+                    foreach (var source in value)
+                        if (!sources.Contains(source))
+                            throw new ArgumentException("\"" + source + "\" is not a member of this aggregator's source list.");
+
+                    filterSources = (string[])value.Clone();
+                }
+            }
+        }
+
+        public string[] RecipientAddresses
+        {
+            get { return newsSender.RecipientAddresses; }
+            set { newsSender.RecipientAddresses = value; }
+        }
+
         public event EventHandler FeedRefreshed;
+        public event EventHandler FilteredFeedRefreshed;
+        public event EventHandler NewsletterSent;
 
         public FeedAggregator()
         {
@@ -49,6 +80,7 @@ namespace RssReader
             feed = new List<FeedItem>();
             lastUpdated = DateTime.MinValue;
             refreshInterval = new TimeSpan(defaultRefreshInterval);
+            newsSender = new NewsSender(@"polycirrus@gmail.com", @"sumszxdobwzycvcb");
 
             timer = new Timer(timerInterval);
             timer.Elapsed += OnTimerElapsed;
@@ -94,6 +126,12 @@ namespace RssReader
             {
                 IEnumerable<FeedItem> newFeed = null;
 
+                string[] sourcesCopy;
+                lock (syncRoot)
+                {
+                    sourcesCopy = sources.ToArray();
+                }
+
                 foreach (var source in sources)
                 {
                     if (newFeed == null)
@@ -114,15 +152,18 @@ namespace RssReader
                 lastUpdated = DateTime.Now;
             }
 
+            FeedRefreshed?.Invoke(this, new EventArgs());
+
             bool filterSet;
             lock (syncRoot)
             {
-                filterSet = filterSources != null;
+                filterSet = filterSources != null && filterSources.Length > 0;
             }
             if (filterSet)
                 Task.Factory.StartNew(FilterBySource);
+            else
+                FilteredFeedRefreshed?.Invoke(this, new EventArgs());
 
-            FeedRefreshed?.Invoke(this, new EventArgs());
         }
 
         private IEnumerable<FeedItem> GetFeed(string source)
@@ -146,7 +187,9 @@ namespace RssReader
                     reader.Close();
             }
 
-            return syndicationFeed.Items.Select(syndicationItem => new FeedItem(syndicationItem, source));
+            var result = syndicationFeed.Items.Select(syndicationItem => new FeedItem(syndicationItem, source)).ToList();
+            result.SortByPublishDate();
+            return result;
         }
 
         public string[] GetSources()
@@ -172,18 +215,6 @@ namespace RssReader
             }
         }
 
-        public void SetSourceFilter(string[] acceptedSources)
-        {
-            lock (syncRoot)
-            {
-                foreach (var source in acceptedSources)
-                    if (!sources.Contains(source))
-                        throw new ArgumentException("\"" + source + "\" is not a member of this aggregator's source list.");
-
-                filterSources = acceptedSources;
-            }
-        }
-
         private void FilterBySource()
         {
             FeedItem[] feedCopy;
@@ -196,22 +227,27 @@ namespace RssReader
 
             List<FeedItem> filterResult = feedCopy.Where(feedItem => acceptedSourcesCopy.Contains(feedItem.Source)).ToList();
 
-            lock (syncRoot)
-            {
-                filteredFeed = filterResult;
-            }
+            lock (syncRoot) { filteredFeed = filterResult; }
+
+            FilteredFeedRefreshed?.Invoke(this, new EventArgs());
         }
 
-        public void Send(string address)
+        public void SendNewsletter(bool filtered)
+        {
+            Task.Factory.StartNew(() => Send(filtered));
+        }
+
+        private void Send(bool filtered)
         {
             FeedItem[] feedCopy;
-            lock (syncRoot)
-            {
-                feedCopy = feed.ToArray();
-            }
+            if (filtered)
+                lock (syncRoot) { feedCopy = filteredFeed?.ToArray() ?? feed.ToArray(); }
+            else
+                lock (syncRoot) { feedCopy = feed.ToArray(); }
 
-            var sender = new NewsSender(@"polycirrus@gmail.com", @"sumszxdobwzycvcb");
-            sender.SendNewsItems(feedCopy, new string[1] { address });
+            newsSender.SendNewsItems(feedCopy);
+
+            NewsletterSent?.Invoke(this, new EventArgs());
         }
     }
 }
