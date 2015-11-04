@@ -80,7 +80,7 @@ namespace RssReader
             feed = new List<FeedItem>();
             lastUpdated = DateTime.MinValue;
             refreshInterval = new TimeSpan(defaultRefreshInterval);
-            newsSender = new NewsSender(@"polycirrus@gmail.com", @"sumszxdobwzycvcb");
+            newsSender = new NewsSender(@"abc@abc.com", @"qwerty");
 
             timer = new Timer(timerInterval);
             timer.Elapsed += OnTimerElapsed;
